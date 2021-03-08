@@ -1,6 +1,6 @@
 import backtrader as bt
 
-class SignalStrategy(bt.Strategy):
+class DefaultMACDStrategy(bt.Strategy):
     params = (
         # Standard MACD Parameters
         ('macd1', 12),
@@ -8,21 +8,29 @@ class SignalStrategy(bt.Strategy):
         ('macdsig', 9),
         ('atrperiod', 14),  # ATR Period (standard)
         ('atrdist', 3.0),  # ATR distance for stop price
-        ('smaperiod', 30),  # SMA Period (pretty standard)
-        ('dirperiod', 10),  # Lookback period to consider SMA trend direction
+        # ('smaperiod', 15),  # SMA Period (pretty standard)
+        # ('dirperiod', 3),  # Lookback period to consider SMA trend direction
+        ('atrperiod', 14),  # ATR Period (standard)
+        ('atrdist', 3.0),  # ATR distance for stop price
     )
 
     def __init__(self):
-        self.dataclose = self.datas[0].close
-
-        self.macd = bt.indicators.MACD(self.data,
-                                       period_me1=self.p.macd1,
-                                       period_me2=self.p.macd2,
-                                       period_signal=self.p.macdsig)
-
         self.order = None
         self.buyprice = None
         self.buycomm = None
+        self.pstop = None
+
+        self.dataclose = self.datas[0].close
+
+        # Main signal
+        self.macd = bt.indicators.MACDHisto(self.data,
+                                       period_me1=self.p.macd1,
+                                       period_me2=self.p.macd2,
+                                       period_signal=self.p.macdsig)
+        self.macd_crossover = bt.indicators.CrossOver(self.macd.macd, self.macd.signal)
+
+        # To set the stop loss order
+        self.atr = bt.indicators.ATR(self.data, period=self.p.atrperiod)
 
     def log(self, txt):
         ''' Logging function fot this strategy'''
@@ -67,19 +75,50 @@ class SignalStrategy(bt.Strategy):
         self.log('OPERATION PROFIT, GROSS %.2f, NET %.2f' %
                  (trade.pnl, trade.pnlcomm))
 
-    def next(self):
-        # Simply log the closing price of the series from the reference
-        self.log('Close, %.4f, MACD: %.4f, SIG: %.4f' % (self.dataclose[0], self.macd.macd[0], self.macd.signal[0]))
 
+class SignalStrategy(DefaultMACDStrategy):
+    def next(self):
         if self.order:
             return
 
         if not self.position:
             # We might BUY
-            if self.macd.macd[0] > self.macd.signal[0]:
-                self.log('BUY CREATE, %.2f' % self.dataclose[0])
+            if self.macd_crossover[0] > 0:
+                self.order = self.buy()
+                pdist = self.atr[0] * self.p.atrdist
+                self.pstop = self.data.close[0] - pdist
+        else:
+            if self.macd_crossover[0] < 0:
+                self.order = self.sell()
+            elif self.data.close[0] < self.pstop:
+                self.order = self.sell()
+            else:
+                pdist = self.atr[0] * self.p.atrdist
+                # Update only if greater than
+                self.pstop = max(self.pstop, self.data.close[0] - pdist)
+
+
+class CrossOverStrategy(DefaultMACDStrategy):
+    def next(self):
+        if self.order:
+            return
+
+        if not self.position:
+            if self.macd.histo[0] > 0:
                 self.order = self.buy()
         else:
-            if self.macd.macd[0] < self.macd.signal[0]:
-                self.log('SELL CREATE, %.2f' % self.dataclose[0])
+            if self.macd.histo[0] < 0:
+                self.order = self.sell()
+
+
+class FlipStrategy(DefaultMACDStrategy):
+    def next(self):
+        if self.order:
+            return
+
+        if not self.position:
+            if self.macd.histo[0] > self.macd.signal[0]:
+                self.order = self.buy()
+        else:
+            if self.macd.histo[0] < self.macd.signal[0]:
                 self.order = self.sell()
