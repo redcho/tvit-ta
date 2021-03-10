@@ -1,4 +1,6 @@
 import backtrader as bt
+import datetime
+import pprint as pp
 
 class SuperTrendBand(bt.Indicator):
     """
@@ -58,7 +60,7 @@ class SuperTrend(bt.Indicator):
             else:
                 self.l.super_trend[0] = self.stb.final_ub[0]
 
-class DefaultMACDStrategy(bt.Strategy):
+class CombinedStrategy(bt.Strategy):
     params = (
         # Standard MACD Parameters
         ('macd1', 12),
@@ -70,33 +72,19 @@ class DefaultMACDStrategy(bt.Strategy):
         # ('dirperiod', 3),  # Lookback period to consider SMA trend direction
         ('atrperiod', 14),  # ATR Period (standard)
         ('atrdist', 3.0),  # ATR distance for stop price
+        ('kama', 10),
+        ('supertrend', 7),
+        ('psar', 2)
     )
 
-    def __init__(self):
-        self.order = None
-        self.buyprice = None
-        self.buycomm = None
-        self.pstop = None
-
-        self.dataclose = self.datas[0].close
-
-        # Main signal
-        self.macd = bt.indicators.MACDHisto(self.data,
-                                       period_me1=self.p.macd1,
-                                       period_me2=self.p.macd2,
-                                       period_signal=self.p.macdsig)
-        self.macd_crossover = bt.indicators.CrossOver(self.macd.macd, self.macd.signal)
-
-        # To set the stop loss order
-        self.atr = bt.indicators.ATR(self.data, period=self.p.atrperiod)
-
-
-
-    def log(self, txt):
+    def log(self, txt, doprint=False, params=None):
         ''' Logging function fot this strategy'''
-        dt = self.datas[0].datetime.date(0)
-        tm = self.datas[0].datetime.time()
-        print('%s: %s, %s' % (dt.isoformat(), tm, txt))
+        if doprint:
+            if params is not None:
+                pp.pprint(params)
+            dt = self.datas[0].datetime.date(0)
+            tm = self.datas[0].datetime.time()
+            print('%s: %s, %s' % (dt.isoformat(), tm, txt))
 
     def notify_order(self, order):
         if order.status in [order.Submitted, order.Accepted]:
@@ -135,57 +123,70 @@ class DefaultMACDStrategy(bt.Strategy):
         self.log('OPERATION PROFIT, GROSS %.5f, NET %.5f, STOP_LOSS %.5f' %
                  (trade.pnl, trade.pnlcomm, self.pstop))
 
+    def __init__(self):
+        self.order = None
+        self.buyprice = None
+        self.buycomm = None
+        self.pstop = None
 
-class SignalStrategy(DefaultMACDStrategy):
+        self.dataclose = self.datas[0].close
+
+        # MACD
+        self.macd = bt.indicators.MACDHisto(self.data,
+                                       period_me1=self.p.macd1,
+                                       period_me2=self.p.macd2,
+                                       period_signal=self.p.macdsig)
+        # MACD X SIGNAL CROSSOVER
+        self.macd_crossover = bt.indicators.CrossOver(self.macd.macd, self.macd.signal)
+
+        # eATR
+        self.atr = bt.indicators.ATR(self.data, period=self.p.atrperiod, movav=bt.indicators.ExponentialMovingAverage)
+
+        # SuperTrend
+        self.supertrend = SuperTrend(self.data, period=self.p.supertrend)
+
+        # self.kama = bt.indicators.AdaptiveMovingAverage(self.data, period=self.p.kama)
+        self.psar = bt.indicators.ParabolicSAR(self.data, period=self.p.psar)
+
     def next(self):
+        if False: # self.data.datetime < bt.date2num(datetime.datetime(2021, 3, 6)):
+            return
+
         if self.order:
             return
 
         if not self.position:
             # We might BUY
-            # if self.macd_crossover[0] > 0:
-            if self.macd_crossover[0] > 0:
+            if self.supertrend < self.dataclose and\
+                self.macd_crossover > 0:
                 self.order = self.buy()
                 pdist = self.atr[0] * self.p.atrdist
-                self.pstop = self.data.close[0] - pdist
+                self.pstop = self.dataclose - pdist
         else:
             if self.macd_crossover[0] < 0:
                 self.order = self.sell()
-            else:
-                pdist = self.atr[0] * self.p.atrdist
-                # Update only if greater than
-                self.pstop = max(self.pstop, self.data.close[0] - pdist)
-
-
-class CrossOverStrategy(DefaultMACDStrategy):
-    def next(self):
-        if self.order:
-            return
-
-        if not self.position:
-            # We might BUY
-            if self.macd.histo[0] > 0:
-                self.order = self.buy()
-                pdist = self.atr[0] * self.p.atrdist
-                self.pstop = self.data.close[0] - pdist
-        else:
-            if self.macd.histo[0] < 0:
-                self.order = self.sell()
-            elif self.data.close[0] < self.pstop:
+            # STOP LOSS
+            elif self.data.close < self.pstop:
                 self.order = self.sell()
             else:
-                pdist = self.atr[0] * self.p.atrdist
+                pdist = self.atr * self.p.atrdist
                 # Update only if greater than
-                self.pstop = max(self.pstop, self.data.close[0] - pdist)
+                self.pstop = max(self.pstop, self.dataclose - pdist)
 
-class FlipStrategy(DefaultMACDStrategy):
-    def next(self):
-        if self.order:
-            return
-
-        if not self.position:
-            if self.macd.histo[0] > self.macd.signal[0]:
-                self.order = self.buy()
-        else:
-            if self.macd.histo[0] < self.macd.signal[0]:
-                self.order = self.sell()
+    def stop(self):
+        self.log('Ending Value %.2f' %
+                 self.broker.getvalue(), doprint=True, params=(
+        # Standard MACD Parameters
+        ('macd1', self.params.macd1),
+        ('macd2', self.params.macd2),
+        ('macdsig', self.params.macdsig),
+        ('atrperiod', self.params.atrperiod),  # ATR Period (standard)
+        ('atrdist', self.params.atrdist),  # ATR distance for stop price
+        # ('smaperiod', 15),  # SMA Period (pretty standard)
+        # ('dirperiod', 3),  # Lookback period to consider SMA trend direction
+        ('atrperiod', self.params.atrperiod),  # ATR Period (standard)
+        ('atrdist', self.params.atrdist),  # ATR distance for stop price
+        ('kama', self.params.kama),
+        ('supertrend', self.params.supertrend),
+        ('psar', self.p.psar)
+    ))
