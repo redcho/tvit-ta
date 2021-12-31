@@ -5,44 +5,13 @@ import backtrader as bt
 import pandas as pd
 import pytz
 import quantstats
+from util.BackTraderIO import BackTraderIO
 
 from strategies import MACDStrategy
 from strategies import CombinedStrategy
 
-AMSTERDAM = pytz.timezone("Europe/Amsterdam")
-
-def load_df(symbol="BNBEUR"):
-    df = pd.read_csv(f"../binance-crawler/data/{symbol}/20201231_2259-20210401_2259.csv")
-
-    df['datetime'] = pd \
-        .to_datetime(df['open_time'], unit='ms') \
-        .dt.tz_localize('UTC') \
-        .dt.tz_convert(AMSTERDAM)
-
-    df = df.drop(columns=['ignore', 'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'quote_asset_volume',
-                          'num_trades', 'open_time', 'close_time'])
-
-    # df['close_time'] = pd \
-    #     .to_datetime(df['close_time'], unit='ms') \
-    #     .dt.tz_localize('UTC') \
-    #     .dt.tz_convert(AMSTERDAM)
-
-    df.set_index('datetime', inplace=True)
-
-    # Filter if necessary
-    # filt = pd.to_datetime("2021-02-28 15:40:00", format='%Y-%m-%d %H:%M:%S') \
-    #     .tz_localize(AMSTERDAM)
-    # filtered = df[df.index >= filt]
-
-    # DEBUG
-    # now = pd.to_datetime("2021-02-01 00:00:00", format='%Y-%m-%d %H:%M:%S') \
-    #     .tz_localize(AMSTERDAM)
-    # now_r = df.loc[ now , : ]
-    # print(now_r)
-
-    # print(df.head())
-    return df
-
+from strategies.DebugStrategy import DebugStrategy
+from util.bt_logging import get_logger
 
 def printSQN(analyzer):
     sqn = round(analyzer.sqn,2)
@@ -91,76 +60,71 @@ def printCerebroResult(results, symbol):
 
 
 if __name__ == '__main__':
+    logger = get_logger(__name__)
+
+    # logging.basicConfig(filename='app.log', filemode='w',
+    #                     format='%(name)s - %(levelname)s - %(message)s')
 
     symbols = {
-        # "BNBEUR": {
-        #     "cash": 300.0,
-        #     "commission": 0.00075,
-        #     "stake": 1
-        # },
-        # "BTCUSDT": {
-        #     "cash": 70000.0,
-        #     "commission": 0.00075,
-        #     "stake": 1
-        # },
-        # "ETHEUR": {
-        #     "cash": 2000.0,
-        #     "commission": 0.00075,
-        #     "stake": 1
-        # },
-        "XEMUSDT": {
+        "ETHUSDT": {
+            # Data source conf
+            'interval': '1h',
+            'fromdate': '2021-01-01',
+            'todate': '2022-01-01',
+
+            # Trade conf
             "cash": 1000.0,
             "commission": 0.00075,
-            "stake": 100
-        }
+            "stake": 100,
+        },
     }
 
+    tz = pytz.timezone("Europe/Amsterdam")
+
     for symbol, conf in symbols.items():
+
         cerebro = bt.Cerebro()
+        logger.debug('Cerebro created..')
 
         cerebro.broker.setcash(conf['cash'])
+        logger.debug(f'Initial cash amount is set to {conf["cash"]}')
+
         cerebro.broker.setcommission(commission=conf['commission'])
+        logger.debug(f'Broker commission is set to {conf["commission"]}')
 
         cerebro.addsizer(bt.sizers.SizerFix, stake=conf['stake'])
+        logger.debug(f'Position size is fixed to {conf["stake"]}')
 
-        # params = (
-        #     # Standard MACD Parameters
-        #     ('macd1', 12),
-        #     ('macd2', 26),
-        #     ('macdsig', 9),
-        #     ('atrperiod', 14),  # ATR Period (standard)
-        #     ('atrdist', 3.0),  # ATR distance for stop price
-        #     # ('smaperiod', 15),  # SMA Period (pretty standard)
-        #     # ('dirperiod', 3),  # Lookback period to consider SMA trend direction
-        #     ('atrperiod', 14),  # ATR Period (standard)
-        #     ('atrdist', 3.0),  # ATR distance for stop price
-        #     ('kama', 10),
-        #     supertrend
-        # )
+        cerebro.addstrategy(DebugStrategy)
+        logger.debug(f'Strategy added to cerebro')
+
+        bt_data = BackTraderIO(symbol, conf['interval'], conf['fromdate'], conf['todate']).get_data()
+        logger.debug(f"Data loaded from {conf['fromdate']} to {conf['todate']} for {symbol} per {conf['interval']}")
+
+        data = bt.feeds.PandasData(dataname=bt_data, tz=tz)
+        cerebro.adddata(data)
+        cerebro.addtz(tz)
+        logger.debug(f'Data feed added to the simulation feed')
+
+        cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
+        cerebro.addanalyzer(bt.analyzers.SQN, _name="sqn")
+        cerebro.addanalyzer(bt.analyzers.PyFolio, _name='PyFolio')
+        logger.debug(f'Active analyzers are {cerebro.analyzers}')
+
+        logger.debug('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
+        cerebro.addwriter(bt.WriterFile, csv=False, out="a.csv")
+        r = cerebro.run()
+        logger.debug('Final Portfolio Value: %.2f' % cerebro.broker.getvalue())
+
+        # printCerebroResult(r, symbol)
+
+        # cerebro.plot(style='bar', stdstats=True)
 
         # cerebro.optstrategy(
         #     CombinedStrategy.CombinedStrategy,
         #     kama=range(10,15),
         #     macd2=range(20,30)
         # )
-
-        cerebro.addstrategy(CombinedStrategy.CombinedStrategy)
-
-        data = bt.feeds.PandasData(dataname=load_df(symbol=symbol), tz=AMSTERDAM)
-
-        cerebro.adddata(data)
-
-        cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
-        cerebro.addanalyzer(bt.analyzers.SQN, _name="sqn")
-        cerebro.addanalyzer(bt.analyzers.PyFolio, _name='PyFolio')
-
-        print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
-
-        r = cerebro.run()
-        printCerebroResult(r, symbol)
-        # cerebro.plot(style='bar', stdstats=True)
-
-
 
         # import pyfolio as pf
         # pf.create_full_tear_sheet(
@@ -172,5 +136,3 @@ if __name__ == '__main__':
         #     round_trips=True)
         # pf.create_simple_tear_sheet(returns)
         # pf.create_returns_tear_sheet(returns)
-
-        print('Final Portfolio Value: %.2f' % cerebro.broker.getvalue())

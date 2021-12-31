@@ -16,6 +16,7 @@ class SuperTrendBand(bt.Indicator):
         self.l.basic_lb = ((self.data.high + self.data.low) / 2) - (self.atr * self.p.multiplier)
 
     def next(self):
+
         if len(self)-1 == self.p.period:
             self.l.final_ub[0] = self.l.basic_ub[0]
             self.l.final_lb[0] = self.l.basic_lb[0]
