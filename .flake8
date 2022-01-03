@@ -1,0 +1,10 @@
+# non-style linting concerns
+
+[flake8]
+strinct = False
+lazy = True
+#select = C,E,F,W,B,B950
+select = W291  # the select above is the goal we want to achieve
+extend-ignore = E501
+max-complexity = 10
+exclude = .git,.venv,build,migrations
