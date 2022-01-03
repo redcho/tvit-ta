@@ -1,0 +1,37 @@
+simulation:
+  cash: 1000.0
+  commission: 0.00075
+  stake: 100
+metadata:
+  interval: 1h
+  fromdate: 2020-01-01
+  todate: 2022-01-01
+symbol:
+  - ETHUSDT
+  - BNBUSDT
+  - LTCUSDT
+  - RSRUSDT
+  - CAKEUSDT
+  - LINKUSDT
+  - ADAUSDT
+  - MANAUSDT
+  - UNIUSDT
+  - FILUSDT
+  - COTIUSDT
+  - IOTAUSDT
+  - THETAUSDT
+  - SOLUSDT
+  - MATICUSDT
+  - 1INCHUSDT
+  - AAVEUSDT
+  - EGLDUSDT
+#  - Speculatives
+  - XRPUSDT
+  - DOGEUSDT
+  - SHIBUSDT
+#  - People are in loss
+  - BTTUSDT
+  - ONTUSDT
+  - CHZUSDT
+  - HOTUSDT
+
